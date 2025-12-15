@@ -90,10 +90,16 @@ class AzulEnv:
         self.current_player = 0
         self.game = az_game
         self.agent_idx = agent_player_index
+        self.done = False
+        self.turn_count = 0
 
         self.table = self.game.table
         self.factories = self.table.factories
         self.center = self.table.center
+        self.supplier_ids = (
+                [f.supplier_id for f in self.factories]
+                + [self.center.supplier_id]
+        )
 
         self.num_factories = len(self.factories)
         self.num_suppliers = self.num_factories + 1  # factories + center
@@ -209,25 +215,44 @@ class AzulEnv:
 
         return np.concatenate([sup, agent, opp_vec]).astype(np.float32)
 
+    # def _decode_action(self, idx):
+    #     per_supplier = self.num_colors * self.action_target_options
+    #     supplier = idx // per_supplier
+    #     rem = idx % per_supplier
+    #     color = rem // self.action_target_options
+    #     target = rem % self.action_target_options
+    #     return supplier, color, target
     def _decode_action(self, idx):
         per_supplier = self.num_colors * self.action_target_options
-        supplier = idx // per_supplier
+        supplier_idx = idx // per_supplier
         rem = idx % per_supplier
-        color = rem // self.action_target_options
+        color_idx = rem // self.action_target_options
         target = rem % self.action_target_options
-        return supplier, color, target
 
-    def _encode_action(self, s, c, t):
-        return s * self.num_colors * self.action_target_options + c * self.action_target_options + t
+        # map supplier index (0..num_suppliers-1) to actual supplier_id
+        supplier_id = self.supplier_ids[supplier_idx]
+        return supplier_id, color_idx, target
+
+    def _encode_action(self, supplier_idx, color_idx, target):
+        return (
+                supplier_idx * self.num_colors * self.action_target_options
+                + color_idx * self.action_target_options
+                + target
+        )
 
     def legal_action_mask(self):
         mask = np.zeros(self.action_size, dtype=bool)
 
         for a in range(self.action_size):
-            s_id, c_id, target = self._decode_action(a)
+            supplier_id, c_id, target = self._decode_action(a)
 
-            supplier = self.factories[s_id] if s_id < self.num_factories else self.center
+            # get supplier via real ID
+            try:
+                supplier = self.table.get_supplier(supplier_id)
+            except Exception:
+                continue
 
+            # does supplier contain this color?
             contains_color = any(
                 self._color_to_index(t.color) == c_id
                 for t in supplier.tiles
@@ -235,6 +260,7 @@ class AzulEnv:
             if not contains_color:
                 continue
 
+            # floor line always allowed
             if target == self.pattern_lines:
                 mask[a] = True
                 continue
@@ -245,12 +271,13 @@ class AzulEnv:
             if pl.is_complete():
                 continue
 
+            # wall color conflict
             row = target
             color_enum = self.colors[c_id]
             wall = player.board.wall.lines
 
             forbidden = any(
-                (slot.color == color_enum and not slot.is_empty())
+                slot.color == color_enum and not slot.is_empty()
                 for slot in wall[row]
             )
             if forbidden:
@@ -264,20 +291,25 @@ class AzulEnv:
         self.players = [azul.Player(f"Player {i}") for i in range(self.num_players)]
         self.game = azul.Game(self.players)
         self.table = self.game.table
+        self.factories = self.table.factories
+        self.center = self.table.center
+        self.supplier_ids = (
+                [f.supplier_id for f in self.factories]
+                + [self.center.supplier_id]
+        )
 
         self.done = False
         self.turn_count = 0
         return self.encode_state()
 
     def step(self, action):
-        s_id, c_id, target = self._decode_action(action)
+        supplier_id, c_id, target = self._decode_action(action)
         color_enum = self.colors[c_id]
         pattern_line = -1 if target == self.pattern_lines else target
 
         prev = self.game.players[self.agent_idx].points
 
-        #execute next action
-        self.game.take_turn(s_id, color_enum, pattern_line)
+        self.game.take_turn(supplier_id, color_enum, pattern_line)
 
         now = self.game.players[self.agent_idx].points
         reward = now - prev
@@ -285,8 +317,8 @@ class AzulEnv:
         done = self.game._check_end()
         print("CHECK END", done)
         next_state = self.encode_state()
-        return next_state, reward, done, {}
 
+        return next_state, reward, done, {}
 
 class DQNAgent:
     def __init__(self, obs_dim: int, action_dim: int):
