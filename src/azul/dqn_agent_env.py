@@ -4,6 +4,7 @@ from collections import deque, namedtuple
 from typing import Tuple, List
 
 import numpy as np
+from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -376,6 +377,24 @@ class DQNAgent:
     def update_target(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())
 
+    def save(self, path: str) -> None:
+        parent = Path(path).parent
+        if not parent.exists():
+            parent.mkdir(parents=True, exist_ok=True)
+        abs_path = Path(path).resolve()
+        print(f"Saving agent model to: {abs_path}")
+        torch.save(self.policy_net.state_dict(), path)
+
+    def load(self, path: str) -> None:
+        abs_path = Path(path).resolve()
+        if not Path(path).exists():
+            print(f"Model file does not exist: {abs_path}")
+            raise FileNotFoundError(f"Model file not found: {abs_path}")
+        print(f"Loading agent model from: {abs_path}")
+        state = torch.load(path, map_location=DEVICE)
+        self.policy_net.load_state_dict(state)
+        self.update_target()
+
 
 def train(env: AzulEnv, agent: DQNAgent, num_episodes: int = 1000):
     total_steps = 0
@@ -415,3 +434,15 @@ if __name__ == "__main__":
     agent = DQNAgent(obs_dim, act_dim)
 
     train(env, agent, num_episodes=5)
+    agent.save('models/dqn_agent.pth')
+
+
+def choose_action_for_game(agent: DQNAgent, game: "azul.Game", agent_idx: int):
+    env = AzulEnv(game, agent_player_index=agent_idx, num_players=len(game.players))
+    state = env.encode_state()
+    mask = env.legal_action_mask()
+    action_idx = agent.select_action(state, mask, eval_mode=True)
+    supplier_id, color_idx, target = env._decode_action(action_idx)
+    color_enum = env.colors[color_idx]
+    pattern_line = -1 if target == env.pattern_lines else target
+    return supplier_id, color_enum, pattern_line

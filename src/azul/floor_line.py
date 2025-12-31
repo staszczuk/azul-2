@@ -4,7 +4,7 @@ from azul.tile import Tile
 
 class FloorLine:
     def __init__(self) -> None:
-        self._slots = [FLSlot(None, points) for points in [1, 1, 2, 2, 2, 3, 3]]
+        self._slots = [FLSlot(None, points) for points in [-1, -1, -2, -2, -2, -3, -3]]
 
     @property
     def slots(self) -> list[FLSlot]:
