@@ -316,7 +316,7 @@ class AzulEnv:
         reward = now - prev
 
         done = self.game._check_end()
-        print("CHECK END", done)
+        #print("CHECK END", done)
         next_state = self.encode_state()
 
         return next_state, reward, done, {}
@@ -403,23 +403,72 @@ def train(env: AzulEnv, agent: DQNAgent, num_episodes: int = 1000):
         done = False
         ep_reward = 0.0
         while not done:
-            print("STEP BEGIN")
             mask = env.legal_action_mask()
-            print("MASK OK")
             action = agent.select_action(obs, mask)
-            print("ACTION =", action)
             obs2, reward, done, info = env.step(action)
-            print("STEP DONE | reward=", reward, " done=", done)
             agent.store_transition(obs, action, reward, obs2, done)
-            print("STORE OK")
             agent.optimize()
-            print("OPTIMIZE OK")
             obs = obs2
             ep_reward += reward
             total_steps += 1
             if total_steps % TARGET_UPDATE_FREQ == 0:
                 agent.update_target()
-        print(f"[Episode {ep}] reward={ep_reward:.2f}")
+        if ep % 100 == 0:
+            print(f"[Episode {ep}] reward={ep_reward:.2f}")
+        if ep % 100 == 0:
+            agent.save(f"models/dqn_agent_v4_ep{ep}.pth")
+
+
+def evaluate_agent(agent: DQNAgent, num_games: int = 100):
+    wins = 0
+    total_score = 0
+    total_diff = 0
+
+    for g in range(num_games):
+        p1 = azul.Player("Agent")
+        p2 = azul.Player("Random")
+        game = azul.Game([p1, p2])
+
+        env = AzulEnv(game, agent_player_index=0)
+        obs = env.encode_state()
+
+        done = False
+
+        while not done:
+
+            #agent
+            mask = env.legal_action_mask()
+            action = agent.select_action(obs, mask, eval_mode=True)
+
+            obs, reward, done, _ = env.step(action)
+
+            if done:
+                break
+
+            #random player
+            opp_mask = env.legal_action_mask()
+            legal = np.nonzero(opp_mask)[0]
+
+            if len(legal) > 0:
+                opp_action = int(np.random.choice(legal))
+            else:
+                opp_action = random.randrange(env.action_size)
+
+            obs, reward, done, _ = env.step(opp_action)
+
+        agent_score = game.players[0].points
+        opp_score = game.players[1].points
+
+        total_score += agent_score
+        total_diff += agent_score - opp_score
+
+        if agent_score > opp_score:
+            wins += 1
+
+    print("Games:", num_games)
+    print("Win rate:", wins / num_games)
+    print("Avg agent score:", total_score / num_games)
+    print("Avg score diff:", total_diff / num_games)
 
 
 if __name__ == "__main__":
@@ -433,8 +482,16 @@ if __name__ == "__main__":
     act_dim = env.action_size
     agent = DQNAgent(obs_dim, act_dim)
 
-    train(env, agent, num_episodes=5)
-    agent.save('models/dqn_agent.pth')
+    if Path("models/dqn_agent_v4_ep11700.pth").exists():
+        print("Found existing model. Loading and continuing training...")
+        agent.load("models/dqn_agent_v4_ep11700.pth")
+    else:
+        print("No saved model found. Training from scratch.")
+
+    #train(env, agent, num_episodes=50000)
+    #agent.save('models/dqn_agent1.pth')
+
+    evaluate_agent(agent, num_games=100)
 
 
 def choose_action_for_game(agent: DQNAgent, game: "azul.Game", agent_idx: int):
