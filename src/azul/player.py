@@ -33,6 +33,9 @@ class Player:
                     pattern_line.take_rightmost_tile(), i
                 )
                 lid.place_tiles(pattern_line.take_all_tiles())
+        points += self._board.floor_line.sum_points()
+        if points < 0:
+            points = 0
         return points
 
     def pick_tiles(self, supplier: Supplier, color: Color, pattern_line_i: int) -> None:
